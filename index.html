@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guided Chess Engine</title>
+    <!-- Google Fonts for typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* A clean, minimalist light theme */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f5f5f5;
+            color: #263238;
+        }
+        h1, h2, h3 {
+            font-family: 'Merriweather', serif;
+        }
+
+        /* "Marble & Slate" board colors */
+        .light-square { background-color: #ECEFF1; }
+        .dark-square  { background-color: #78909C; }
+        
+        /* A soft, teal glow for the selected square */
+        .selected-square {
+            box-shadow: inset 0 0 0 5px rgba(38, 166, 154, 0.7);
+        }
+
+        /* A translucent ring for possible moves */
+        .possible-move-ring::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40%;
+            height: 40%;
+            border-radius: 50%;
+            box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.2) inset;
+        }
+
+        /* Subtle highlight for the last move made by the engine */
+        .last-move-highlight {
+            background-color: rgba(38, 166, 154, 0.3);
+        }
+        
+        /* Indeterminate progress bar for engine thinking */
+        @keyframes progress-animation {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        .thinking-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 50%;
+            background-color: rgba(38, 166, 154, 0.5);
+            border-radius: 9999px;
+            animation: progress-animation 1.5s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- 
+      JavaScript libraries. 
+      The order is important: Core libraries first, then the Babel transpiler.
+    -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    
+    <!-- Babel must be loaded after the other libraries so they are available for the transpiled script -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- Constants ---
+        const PIECE_MAP = {
+            'p': '♟︎', 'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚',
+            'P': '♙', 'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔',
+        };
+
+        // --- React Components ---
+
+        function Piece({ piece }) {
+            const pieceColor = piece.color === 'w' ? 'text-white' : 'text-black';
+            const textShadow = piece.color === 'w' ? '0 0 4px rgba(0,0,0,0.8)' : '0 0 4px rgba(255,255,255,0.8)';
+
+            return (
+                <div
+                    className={`text-4xl sm:text-5xl md:text-6xl cursor-pointer flex items-center justify-center w-full h-full ${pieceColor} select-none`}
+                >
+                    <span style={{ textShadow }}>
+                        {PIECE_MAP[piece.color === 'w' ? piece.type.toUpperCase() : piece.type]}
+                    </span>
+                </div>
+            );
+        }
+        
+        function Square({ piece, position, isBlack, isSelected, isPossibleMove, isLastMove, onClick }) {
+            const squareColorClass = isBlack ? 'dark-square' : 'light-square';
+            const selectedClass = isSelected ? 'selected-square' : '';
+            const possibleMoveClass = isPossibleMove && !piece ? 'possible-move-ring' : '';
+            const lastMoveClass = isLastMove ? 'last-move-highlight' : '';
+
+            return (
+                <div
+                    onClick={() => onClick(position)}
+                    className={`relative w-full h-full ${squareColorClass} ${selectedClass} ${possibleMoveClass} ${lastMoveClass} transition-all duration-150 ease-in-out cursor-pointer flex justify-center items-center`}
+                >
+                    {piece && <Piece piece={piece} />}
+                </div>
+            );
+        }
+
+        function Chessboard({ game, onSquareClick, fromSquare, possibleMoves, lastEngineMove }) {
+             const boardRepresentation = useMemo(() => {
+                const squares = [];
+                for (let i = 0; i < 8; i++) {
+                    for (let j = 0; j < 8; j++) {
+                        const position = String.fromCharCode(97 + j) + (8 - i);
+                        const isLastMove = lastEngineMove && (position === lastEngineMove.from || position === lastEngineMove.to);
+                        
+                        squares.push(
+                            <Square
+                                key={position}
+                                piece={game.get(position)}
+                                isBlack={(i + j) % 2 !== 0}
+                                position={position}
+                                isSelected={fromSquare === position}
+                                isPossibleMove={possibleMoves.includes(position)}
+                                isLastMove={isLastMove}
+                                onClick={onSquareClick}
+                            />
+                        );
+                    }
+                }
+                return squares;
+            }, [game.fen(), fromSquare, possibleMoves, lastEngineMove]);
+            
+            return (
+                <div className="grid grid-cols-8 grid-rows-8 w-full aspect-square shadow-2xl rounded-md overflow-hidden border-4 border-gray-400">
+                    {boardRepresentation}
+                </div>
+            );
+        }
+
+        function StatBar({ label, value }) {
+            const percentage = Math.max(0, Math.min(100, value * 100));
+            return (
+                <div>
+                    <div className="flex justify-between items-center text-sm mb-1 text-slate-600">
+                        <span className="font-semibold">{label}</span>
+                        <span>{percentage.toFixed(1)}%</span>
+                    </div>
+                    <div className="w-full bg-slate-300 rounded-full h-2">
+                        <div
+                            className="bg-teal-500 h-2 rounded-full transition-all duration-500 ease-out"
+                            style={{ width: `${percentage}%` }}
+                        ></div>
+                    </div>
+                </div>
+            );
+        }
+        
+        // --- NEW: A modal component for the explanation ---
+        function ExplanationModal({ onClose }) {
+             return (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg shadow-2xl p-6 md:p-8 max-w-lg w-full relative">
+                        <button onClick={onClose} className="absolute top-3 right-3 text-slate-400 hover:text-slate-800">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                        <h2 className="text-2xl font-bold mb-4">How The London AI Thinks</h2>
+                        <div className="text-sm text-slate-600 space-y-4">
+                            <p>This engine makes a "negotiated decision" by blending the outputs of two distinct models:</p>
+                            <div className="flex items-start space-x-4">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-teal-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                <div>
+                                    <h3 className="font-bold text-slate-800">A Style Model</h3>
+                                    <p>A neural network trained on 3.7 million games from 2200+ rated players who exclusively used the London System. It learns to imitate human-like, stylistic moves.</p>
+                                </div>
+                            </div>
+                            <div className="flex items-start space-x-4">
+                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-teal-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M12 6V3m0 18v-3" /></svg>
+                                <div>
+                                    <h3 className="font-bold text-slate-800">A Tactical Model</h3>
+                                    <p>The powerful Stockfish engine provides an objective, tactical analysis of the position's strength.</p>
+                                </div>
+                            </div>
+                             <div className="flex items-start space-x-4">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-teal-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" /></svg>
+                                <div>
+                                    <h3 className="font-bold text-slate-800">The Humanity Score</h3>
+                                    <p>A third model analyzes the board's complexity to decide how much weight to give to human style versus raw tactical strength for the final move.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function App() {
+            const [game, setGame] = useState(new Chess());
+            const [status, setStatus] = useState('You are playing as Black. Click a piece to move.');
+            const [fromSquare, setFromSquare] = useState(null);
+            const [possibleMoves, setPossibleMoves] = useState([]);
+            const [analysis, setAnalysis] = useState(null);
+            const [lastEngineMove, setLastEngineMove] = useState(null);
+            const [history, setHistory] = useState([new Chess().fen()]);
+            const [isExplanationVisible, setExplanationVisible] = useState(false);
+
+            const playerColor = 'b';
+            
+            useEffect(() => {
+                const makeEngineMove = async () => {
+                    if (game.game_over() || game.turn() !== 'w') return;
+                    setStatus("Engine is thinking...");
+
+                    if (game.history().length === 0) {
+                        setTimeout(() => {
+                           const gameCopy = new Chess(game.fen());
+                           gameCopy.move('d4');
+                           setGame(gameCopy);
+                           setHistory([...history, gameCopy.fen()]);
+                           updateStatus(gameCopy);
+                           setAnalysis(null);
+                           setLastEngineMove({ from: 'd2', to: 'd4' });
+                        }, 500);
+                        return;
+                    }
+                    
+                    try {
+                        const response = await fetch('http://127.0.0.1:5000/api/get-move', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ fen: game.fen() }),
+                        });
+
+                        if (!response.ok) throw new Error('Network response was not ok');
+
+                        const data = await response.json();
+                        if (data.best_move) {
+                            const gameCopy = new Chess(game.fen());
+                            const from = data.best_move.substring(0, 2);
+                            const to = data.best_move.substring(2, 4);
+                            const moveResult = gameCopy.move({ from, to, promotion: 'q' });
+
+                            if (moveResult) {
+                                setGame(gameCopy);
+                                setHistory([...history, gameCopy.fen()]);
+                                updateStatus(gameCopy);
+                                setAnalysis(data.analysis);
+                                setLastEngineMove({ from, to });
+                            } else {
+                                console.error("Engine returned an illegal move:", data.best_move);
+                                setStatus("Error: Engine sent an invalid move.");
+                            }
+                        }
+                    } catch (error) {
+                        console.error("Error fetching engine move:", error);
+                        setStatus("Error connecting to engine. Is the server running?");
+                    }
+                };
+                makeEngineMove();
+            }, [game.fen()]);
+
+            function updateStatus(currentGame) {
+                let newStatus = '';
+                if (currentGame.game_over()) {
+                    if (currentGame.in_checkmate()) newStatus = `Game Over: ${currentGame.turn() === 'w' ? 'Black' : 'White'} wins by checkmate.`;
+                    else if (currentGame.in_draw()) newStatus = 'Game Over: Draw.';
+                    else newStatus = 'Game Over.';
+                } else {
+                    newStatus = `It is ${currentGame.turn() === 'b' ? 'your' : "the engine's"} turn.`;
+                    if (currentGame.in_check()) newStatus += ' You are in check.';
+                }
+                setStatus(newStatus);
+            }
+            
+            const handleSquareClick = (square) => {
+                if (game.turn() !== playerColor || game.game_over()) return;
+                setLastEngineMove(null);
+
+                if (!fromSquare) {
+                    const piece = game.get(square);
+                    if (piece && piece.color === playerColor) {
+                        setFromSquare(square);
+                        const moves = game.moves({ square, verbose: true });
+                        setPossibleMoves(moves.map(m => m.to));
+                    }
+                } else {
+                    const gameCopy = new Chess(game.fen());
+                    const move = gameCopy.move({ from: fromSquare, to: square, promotion: 'q' });
+                    
+                    if (move) {
+                        setGame(gameCopy);
+                        setHistory([...history, gameCopy.fen()]);
+                        updateStatus(gameCopy);
+                        setAnalysis(null);
+                    }
+                    
+                    setFromSquare(null);
+                    setPossibleMoves([]);
+                }
+            };
+
+            const handleNewGame = () => {
+                const newGame = new Chess();
+                setGame(newGame);
+                setStatus('New game started. You are Black.');
+                setFromSquare(null);
+                setPossibleMoves([]);
+                setAnalysis(null);
+                setLastEngineMove(null);
+                setHistory([newGame.fen()]);
+            };
+            
+            const handleUndo = () => {
+                if (history.length < 3) return;
+                
+                const newHistory = history.slice(0, -2);
+                const previousFen = newHistory[newHistory.length - 1];
+                const gameCopy = new Chess(previousFen);
+
+                setGame(gameCopy);
+                setHistory(newHistory);
+                updateStatus(gameCopy);
+                setAnalysis(null);
+                setLastEngineMove(null);
+                setFromSquare(null);
+                setPossibleMoves([]);
+            };
+
+            const lichessFen = game.fen().replace(/ /g, '_');
+            const lichessUrl = `https://lichess.org/analysis/standard/${lichessFen}`;
+
+            return (
+                <>
+                    {isExplanationVisible && <ExplanationModal onClose={() => setExplanationVisible(false)} />}
+                    <main className="min-h-screen w-full flex flex-col items-center justify-center p-4">
+                        <div className="w-full max-w-6xl mx-auto flex flex-col lg:flex-row items-center lg:items-center justify-center gap-8">
+                            
+                            <div className="w-full max-w-lg lg:max-w-xl">
+                                <Chessboard 
+                                    game={game} 
+                                    onSquareClick={handleSquareClick}
+                                    fromSquare={fromSquare}
+                                    possibleMoves={possibleMoves}
+                                    lastEngineMove={lastEngineMove}
+                                />
+                            </div>
+                            
+                            <div className="w-full max-w-sm flex flex-col gap-4">
+                                <header className="text-center lg:text-left">
+                                    <h1 className="text-3xl md:text-4xl font-bold tracking-tight">The London AI</h1>
+                                    <p className="text-base md:text-lg text-slate-500 mt-1">A human-styled engine trained on the London System.</p>
+                                </header>
+                                
+                                {/* --- UNIFIED INFO PANEL --- */}
+                                <div className="bg-white/80 backdrop-blur-sm p-4 rounded-lg shadow-lg border min-h-[160px]">
+                                    {analysis && game.turn() === 'b' ? (
+                                        <div>
+                                            <div className="flex justify-between items-center mb-4">
+                                                <h2 className="text-lg font-bold">Engine Analysis</h2>
+                                                <button onClick={() => setExplanationVisible(true)} className="text-slate-500 hover:text-slate-800">
+                                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                </button>
+                                            </div>
+                                            <div className="space-y-4">
+                                                <StatBar label="Humanity Score" value={analysis.humanity} />
+                                                <StatBar label="Style Score" value={analysis.style_score} />
+                                                <StatBar label="Tactic Score" value={analysis.tactic_score} />
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <h2 className="text-lg font-bold mb-3">Game Status</h2>
+                                            <p className="text-lg font-semibold text-slate-700">{status}</p>
+                                            {game.turn() === 'w' && !game.game_over() && (
+                                                <div className="mt-4 w-full bg-slate-300 rounded-full h-2 overflow-hidden relative thinking-bar"></div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="bg-white/80 backdrop-blur-sm p-4 rounded-lg shadow-lg border">
+                                    <h2 className="text-lg font-bold mb-3">Controls</h2>
+                                    <div className="flex flex-col space-y-3">
+                                        <button
+                                            onClick={handleNewGame}
+                                            className="w-full bg-slate-700 hover:bg-slate-800 text-white font-bold py-3 px-4 rounded-lg transition-colors duration-200 shadow-md"
+                                        >
+                                            New Game
+                                        </button>
+                                        <button
+                                            onClick={handleUndo}
+                                            disabled={history.length < 3}
+                                            className="w-full bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-3 px-4 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Undo Move
+                                        </button>
+                                        <a
+                                            href={lichessUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="w-full block text-center bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-3 px-4 rounded-lg transition-colors duration-200"
+                                        >
+                                            Analyze on Lichess
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </>
+            );
+        }
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+
+    </script>
+</body>
+</html>
+
